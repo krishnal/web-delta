@@ -2,12 +2,14 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 
-class SimpleMigrationComparator {
+class MigrationComparator {
   constructor(oldDomain, newDomain) {
     this.oldDomain = oldDomain;
     this.newDomain = newDomain;
     this.snapshotsDir = '__snapshots';
     this.resultsDir = 'results';
+    this.browser = null;
+    this.page = null;
     
     // Create directories if they don't exist
     this.createDirectories();
@@ -21,43 +23,81 @@ class SimpleMigrationComparator {
     });
   }
 
-  async crawlWebsite(baseUrl, maxPages = 10) {
+  async initialize() {
+    this.browser = await puppeteer.launch({ 
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    });
+    this.page = await this.browser.newPage();
+    
+    // Set viewport and user agent for consistent rendering
+    await this.page.setViewport({ width: 1920, height: 1080 });
+    await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+  }
+
+  async close() {
+    if (this.browser) {
+      try {
+        // Close all pages first
+        const pages = await this.browser.pages();
+        await Promise.all(pages.map(page => page.close().catch(() => {})));
+        
+        // Close the browser
+        await this.browser.close();
+        
+        // Force kill any remaining processes
+        if (this.browser.process()) {
+          this.browser.process().kill('SIGKILL');
+        }
+      } catch (error) {
+        console.error('Error closing browser:', error.message);
+        // Force kill as last resort
+        try {
+          if (this.browser.process()) {
+            this.browser.process().kill('SIGKILL');
+          }
+        } catch (killError) {
+          console.error('Error force killing browser process:', killError.message);
+        }
+      } finally {
+        this.browser = null;
+        this.page = null;
+      }
+    }
+  }
+
+  async crawlWebsite(baseUrl) {
     const allUrls = new Set();
     const visitedUrls = new Set();
     const htmlSnapshots = {};
-    let pageCount = 0;
 
     const crawlPage = async (url) => {
-      if (visitedUrls.has(url) || !url.startsWith(baseUrl) || pageCount >= maxPages) {
+      if (visitedUrls.has(url) || !url.startsWith(baseUrl)) {
         return;
       }
 
       console.log(`Crawling: ${url}`);
       visitedUrls.add(url);
-      pageCount++;
 
       try {
-        const browser = await puppeteer.launch({ 
-          headless: true,
-          args: ['--no-sandbox', '--disable-setuid-sandbox']
-        });
-        const page = await browser.newPage();
-        
-        await page.setViewport({ width: 1920, height: 1080 });
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+        // Check if browser is still connected
+        if (!this.browser.isConnected()) {
+          console.log('Browser disconnected, reinitializing...');
+          await this.initialize();
+        }
 
-        await page.goto(url, { 
+        await this.page.goto(url, { 
           waitUntil: 'networkidle2', 
           timeout: 30000 
         });
 
         // Take HTML snapshot
-        const html = await page.content();
+        const html = await this.page.content();
         const urlKey = url.replace(/[^a-zA-Z0-9]/g, '_');
         htmlSnapshots[urlKey] = html;
 
         // Extract all links
-        const pageUrls = await page.evaluate((baseUrl) => {
+        const pageUrls = await this.page.evaluate((baseUrl) => {
           const urlArray = Array.from(document.links).map((link) => link.href);
           const uniqueUrlArray = [...new Set(urlArray)];
           return uniqueUrlArray.filter(url => url.startsWith(baseUrl));
@@ -65,17 +105,23 @@ class SimpleMigrationComparator {
 
         pageUrls.forEach(url => allUrls.add(url));
 
-        await browser.close();
-
-        // Recursively crawl each new URL (limited depth)
+        // Recursively crawl each new URL
         for (const newUrl of pageUrls) {
-          if (!visitedUrls.has(newUrl) && pageCount < maxPages) {
+          if (!visitedUrls.has(newUrl)) {
             await crawlPage(newUrl);
           }
         }
 
       } catch (error) {
         console.error(`Error crawling ${url}:`, error.message);
+        // If it's a connection error, try to reinitialize
+        if (error.message.includes('detached') || error.message.includes('Connection closed')) {
+          try {
+            await this.initialize();
+          } catch (reinitError) {
+            console.error('Failed to reinitialize browser:', reinitError.message);
+          }
+        }
       }
     };
 
@@ -84,12 +130,10 @@ class SimpleMigrationComparator {
   }
 
   async extractPageInfo(html, url) {
+    let tempPage = null;
     try {
-      const browser = await puppeteer.launch({ 
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-      });
-      const tempPage = await browser.newPage();
+      // Create a temporary page to parse HTML
+      tempPage = await this.browser.newPage();
       await tempPage.setContent(html);
       
       const pageInfo = await tempPage.evaluate(() => {
@@ -109,14 +153,18 @@ class SimpleMigrationComparator {
           keywords: getMetaContent('keywords'),
           h1: getTextContent('h1'),
           h2: getTextContent('h2'),
+          mainContent: getTextContent('main') || getTextContent('body'),
           canonical: getMetaContent('canonical'),
           robots: getMetaContent('robots'),
           ogTitle: getMetaContent('og:title'),
-          ogDescription: getMetaContent('og:description')
+          ogDescription: getMetaContent('og:description'),
+          ogImage: getMetaContent('og:image'),
+          twitterCard: getMetaContent('twitter:card'),
+          twitterTitle: getMetaContent('twitter:title'),
+          twitterDescription: getMetaContent('twitter:description')
         };
       });
 
-      await browser.close();
       return pageInfo;
     } catch (error) {
       console.error(`Error extracting page info for ${url}:`, error.message);
@@ -126,11 +174,25 @@ class SimpleMigrationComparator {
         keywords: '',
         h1: '',
         h2: '',
+        mainContent: '',
         canonical: '',
         robots: '',
         ogTitle: '',
-        ogDescription: ''
+        ogDescription: '',
+        ogImage: '',
+        twitterCard: '',
+        twitterTitle: '',
+        twitterDescription: ''
       };
+    } finally {
+      // Always close the temporary page
+      if (tempPage && !tempPage.isClosed()) {
+        try {
+          await tempPage.close();
+        } catch (closeError) {
+          console.error('Error closing temporary page:', closeError.message);
+        }
+      }
     }
   }
 
@@ -161,33 +223,39 @@ class SimpleMigrationComparator {
     compareField('robots', oldInfo.robots, newInfo.robots);
     compareField('ogTitle', oldInfo.ogTitle, newInfo.ogTitle);
     compareField('ogDescription', oldInfo.ogDescription, newInfo.ogDescription);
+    compareField('ogImage', oldInfo.ogImage, newInfo.ogImage);
+    compareField('twitterCard', oldInfo.twitterCard, newInfo.twitterCard);
+    compareField('twitterTitle', oldInfo.twitterTitle, newInfo.twitterTitle);
+    compareField('twitterDescription', oldInfo.twitterDescription, newInfo.twitterDescription);
 
     return differences;
   }
 
   async compareWebsites() {
-    console.log('Starting simple website migration comparison...');
+    console.log('Starting website migration comparison...');
     console.log(`Old Domain: ${this.oldDomain}`);
     console.log(`New Domain: ${this.newDomain}`);
 
+    await this.initialize();
+
     try {
-      // Crawl both websites (limited to 10 pages each)
-      console.log('\n=== Crawling Old Website (max 10 pages) ===');
-      const oldData = await this.crawlWebsite(this.oldDomain, 10);
+      // Crawl both websites
+      console.log('\n=== Crawling Old Website ===');
+      const oldData = await this.crawlWebsite(this.oldDomain);
       
-      console.log('\n=== Crawling New Website (max 10 pages) ===');
-      const newData = await this.crawlWebsite(this.newDomain, 10);
+      console.log('\n=== Crawling New Website ===');
+      const newData = await this.crawlWebsite(this.newDomain);
 
       // Save snapshots
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
       
       fs.writeFileSync(
-        path.join(this.snapshotsDir, `simple_old_website_${timestamp}.json`),
+        path.join(this.snapshotsDir, `old_website_${timestamp}.json`),
         JSON.stringify(oldData, null, 2)
       );
       
       fs.writeFileSync(
-        path.join(this.snapshotsDir, `simple_new_website_${timestamp}.json`),
+        path.join(this.snapshotsDir, `new_website_${timestamp}.json`),
         JSON.stringify(newData, null, 2)
       );
 
@@ -229,7 +297,7 @@ class SimpleMigrationComparator {
           timestamp: new Date().toISOString(),
           oldDomain: this.oldDomain,
           newDomain: this.newDomain,
-          testType: 'simple_comparison'
+          testDuration: `${Date.now() - Date.now()}ms`
         },
         summary: {
           oldWebsiteUrls: oldData.urls.length,
@@ -255,35 +323,33 @@ class SimpleMigrationComparator {
       };
 
       // Save results
-      const resultsFile = path.join(this.resultsDir, `simple_migration_comparison_${timestamp}.json`);
+      const resultsFile = path.join(this.resultsDir, `migration_comparison_${timestamp}.json`);
       fs.writeFileSync(resultsFile, JSON.stringify(results, null, 2));
 
       // Generate human-readable report
-      const reportFile = path.join(this.resultsDir, `simple_migration_report_${timestamp}.md`);
+      const reportFile = path.join(this.resultsDir, `migration_report_${timestamp}.md`);
       this.generateHumanReadableReport(results, reportFile);
 
-      console.log('\n=== Simple Comparison Complete ===');
+      console.log('\n=== Comparison Complete ===');
       console.log(`Results saved to: ${resultsFile}`);
       console.log(`Report saved to: ${reportFile}`);
       console.log(`Snapshots saved to: ${this.snapshotsDir}/`);
 
       return results;
 
-    } catch (error) {
-      console.error('Error during comparison:', error);
-      throw error;
+    } finally {
+      await this.close();
     }
   }
 
   generateHumanReadableReport(results, filename) {
-    let report = `# Simple Website Migration Comparison Report
+    let report = `# Web Delta Comparison Report
 
 ## Test Information
 
 - **Timestamp:** ${results.testInfo.timestamp}
 - **Old Domain:** ${results.testInfo.oldDomain}
 - **New Domain:** ${results.testInfo.newDomain}
-- **Test Type:** ${results.testInfo.testType}
 
 ## Summary
 
@@ -314,16 +380,18 @@ ${results.newUrls.length > 0 ? results.newUrls.map((url, index) => `${index + 1}
 ## Pages with Changes (${results.pageComparisons.length})
 
 ${results.pageComparisons.length > 0 ? results.pageComparisons.map((page, pageIndex) => {
-  const changesList = page.changes.map((change, changeIndex) => {
-    return `### ${changeIndex + 1}. ${change.field}
-
-**Old Value:** ${change.old || '(empty)'}
-**New Value:** ${change.new || '(empty)'}`;
-  }).join('\n\n');
+  const changesTable = page.changes.map((change, changeIndex) => {
+    return `| ${changeIndex + 1} | ${change.field} | ${change.old || '(empty)'} | ${change.new || '(empty)'} |`;
+  }).join('\n');
 
   return `### ${pageIndex + 1}. ${page.url}
 
-${changesList}`;
+| # | Field | Old Value | New Value |
+|---|-------|-----------|-----------|
+${changesTable}
+
+**Total Changes:** ${page.changes.length}
+`;
 }).join('\n\n') : '*No pages with changes found*'}
 
 ---
@@ -364,32 +432,32 @@ if (require.main === module) {
   const options = parseArguments();
   
   if (!options.old || !options.new) {
-    console.log('Simple Website Migration Comparison Tool');
-    console.log('========================================');
+    console.log('Website Migration Comparison Tool');
+    console.log('==================================');
     console.log('');
     console.log('Usage:');
-    console.log('  node simple-test.js --old=<old-domain> --new=<new-domain>');
-    console.log('  node simple-test.js -o <old-domain> -n <new-domain>');
+    console.log('  node migration-compare.js --old=<old-domain> --new=<new-domain>');
+    console.log('  node migration-compare.js -o <old-domain> -n <new-domain>');
     console.log('');
     console.log('Examples:');
-    console.log('  node simple-test.js --old=https://oldwebsite.com --new=https://newwebsite.com');
-    console.log('  node simple-test.js -o https://oldwebsite.com -n https://newwebsite.com');
+    console.log('  node migration-compare.js --old=https://oldwebsite.com --new=https://newwebsite.com');
+    console.log('  node migration-compare.js -o https://oldwebsite.com -n https://newwebsite.com');
     console.log('');
     console.log('Options:');
     console.log('  --old, -o    Old website domain (required)');
     console.log('  --new, -n    New website domain (required)');
     console.log('');
     console.log('Description:');
-    console.log('  Performs a quick comparison of two websites (max 10 pages each)');
-    console.log('  and generates a detailed report of differences.');
+    console.log('  Compares two websites and generates a detailed report of differences,');
+    console.log('  including missing URLs, content changes, and SEO impact analysis.');
     process.exit(1);
   }
 
-  const comparator = new SimpleMigrationComparator(options.old, options.new);
+  const comparator = new MigrationComparator(options.old, options.new);
   
   comparator.compareWebsites()
     .then(results => {
-      console.log('\nSimple migration comparison completed successfully!');
+      console.log('\nMigration comparison completed successfully!');
       process.exit(0);
     })
     .catch(error => {
@@ -398,4 +466,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = SimpleMigrationComparator; 
+module.exports = MigrationComparator;

@@ -27,12 +27,12 @@ npm install
 
 #### Full Comparison (All Pages)
 ```bash
-node migration-compare.js --old=<old-domain> --new=<new-domain>
+node index.js --old=<old-domain> --new=<new-domain>
 ```
 
-#### Simple Comparison (Max 10 Pages Each)
+#### Quick Comparison (Max 10 Pages Each)
 ```bash
-node simple-test.js --old=<old-domain> --new=<new-domain>
+node index.js --old=<old-domain> --new=<new-domain> --quick
 ```
 
 #### Using npm scripts
@@ -40,44 +40,61 @@ node simple-test.js --old=<old-domain> --new=<new-domain>
 # Full comparison using npm
 npm run start:compare -- --old=<old-domain> --new=<new-domain>
 
-# Simple comparison using npm
-npm run start:simple -- --old=<old-domain> --new=<new-domain>
+# Quick comparison using npm
+npm run start:quick -- --old=<old-domain> --new=<new-domain>
 
-# Show usage instructions
-npm start
+# Direct execution
+npm start -- --old=<old-domain> --new=<new-domain>
 ```
 
 #### Alternative Syntax
 ```bash
 # Using short flags
-node migration-compare.js -o <old-domain> -n <new-domain>
+node index.js -o <old-domain> -n <new-domain>
+
+# Using short flags with quick mode
+node index.js -o <old-domain> -n <new-domain> --quick
 
 # Using long flags with equals
-node migration-compare.js --old=https://oldwebsite.com --new=https://newwebsite.com
+node index.js --old=https://oldwebsite.com --new=https://newwebsite.com
 ```
 
 **Examples:**
 ```bash
 # Full comparison
-node migration-compare.js --old=https://oldwebsite.com --new=https://newwebsite.com
+node index.js --old=https://oldwebsite.com --new=https://newwebsite.com
 
 # Quick comparison
-node simple-test.js --old=https://oldwebsite.com --new=https://newwebsite.com
+node index.js --old=https://oldwebsite.com --new=https://newwebsite.com --quick
 
 # Using npm scripts
 npm run start:compare -- --old=https://oldwebsite.com --new=https://newwebsite.com
-npm run start:simple -- --old=https://oldwebsite.com --new=https://newwebsite.com
+npm run start:quick -- --old=https://oldwebsite.com --new=https://newwebsite.com
 
 # Using short flags
-node migration-compare.js -o https://oldwebsite.com -n https://newwebsite.com
+node index.js -o https://oldwebsite.com -n https://newwebsite.com
+node index.js -o https://oldwebsite.com -n https://newwebsite.com --quick
 ```
 
 ### Programmatic Usage
 
 ```javascript
-const MigrationComparator = require('./migration-compare.js');
+// For full comparison
+const MigrationComparator = require('./src/index.js');
 
 const comparator = new MigrationComparator(
+  'https://oldwebsite.com',
+  'https://newwebsite.com'
+);
+
+const results = await comparator.compareWebsites();
+```
+
+```javascript
+// For quick comparison
+const QuickComparator = require('./src/quick.js');
+
+const comparator = new QuickComparator(
   'https://oldwebsite.com',
   'https://newwebsite.com'
 );
@@ -91,15 +108,18 @@ The tool creates the following directory structure:
 
 ```
 project/
-├── __snapshots/           # HTML snapshots of both websites
+├── src/                    # Core comparison modules
+│   ├── index.js            # Full-featured comparison tool
+│   └── quick.js            # Quick comparison tool (max 10 pages)
+├── __snapshots/            # HTML snapshots of both websites
 │   ├── old_website_2025-06-19T06-30-00.json
 │   └── new_website_2025-06-19T06-30-00.json
-├── results/               # Comparison results
+├── results/                # Comparison results
 │   ├── migration_comparison_2025-06-19T06-30-00.json
-│   └── migration_report_2025-06-19T06-30-00.txt
-├── migration-compare.js   # Full-featured tool
-├── simple-test.js         # Simplified tool
-└── README.md              # This file
+│   └── migration_report_2025-06-19T06-30-00.md
+├── index.js                # Main driver script
+├── package.json            # Project configuration
+└── README.md               # This file
 ```
 
 ## Results Analysis
