@@ -1,0 +1,38 @@
+{
+  "name": "web-delta",
+  "version": "1.0.0",
+  "description": "A comprehensive Node.js tool for comparing websites before and after migration, with detailed analysis of content changes, SEO impact, and missing URLs.",
+  "main": "migration-compare.js",
+  "scripts": {
+    "start": "node migration-compare.js",
+    "simple": "node simple-test.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "website",
+    "migration",
+    "comparison",
+    "seo",
+    "crawler",
+    "puppeteer",
+    "analysis",
+    "content",
+    "urls"
+  ],
+  "author": "Web Delta Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/web-delta.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/web-delta/issues"
+  },
+  "homepage": "https://github.com/yourusername/web-delta#readme",
+  "dependencies": {
+    "puppeteer": "^24.10.2"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
