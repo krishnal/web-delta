@@ -4,7 +4,9 @@
   "description": "A comprehensive Node.js tool for comparing websites before and after migration, with detailed analysis of content changes, SEO impact, and missing URLs.",
   "main": "migration-compare.js",
   "scripts": {
-    "start": "node migration-compare.js",
+    "start": "echo \"Usage: npm run start:compare -- --old=<old-domain> --new=<new-domain>\" && echo \"Or: node migration-compare.js --old=<old-domain> --new=<new-domain>\"",
+    "start:compare": "node migration-compare.js",
+    "start:simple": "node simple-test.js",
     "simple": "node simple-test.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

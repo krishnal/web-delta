@@ -37,7 +37,32 @@ class MigrationComparator {
 
   async close() {
     if (this.browser) {
-      await this.browser.close();
+      try {
+        // Close all pages first
+        const pages = await this.browser.pages();
+        await Promise.all(pages.map(page => page.close().catch(() => {})));
+        
+        // Close the browser
+        await this.browser.close();
+        
+        // Force kill any remaining processes
+        if (this.browser.process()) {
+          this.browser.process().kill('SIGKILL');
+        }
+      } catch (error) {
+        console.error('Error closing browser:', error.message);
+        // Force kill as last resort
+        try {
+          if (this.browser.process()) {
+            this.browser.process().kill('SIGKILL');
+          }
+        } catch (killError) {
+          console.error('Error force killing browser process:', killError.message);
+        }
+      } finally {
+        this.browser = null;
+        this.page = null;
+      }
     }
   }
 
@@ -105,9 +130,10 @@ class MigrationComparator {
   }
 
   async extractPageInfo(html, url) {
+    let tempPage = null;
     try {
       // Create a temporary page to parse HTML
-      const tempPage = await this.browser.newPage();
+      tempPage = await this.browser.newPage();
       await tempPage.setContent(html);
       
       const pageInfo = await tempPage.evaluate(() => {
@@ -139,7 +165,6 @@ class MigrationComparator {
         };
       });
 
-      await tempPage.close();
       return pageInfo;
     } catch (error) {
       console.error(`Error extracting page info for ${url}:`, error.message);
@@ -159,6 +184,15 @@ class MigrationComparator {
         twitterTitle: '',
         twitterDescription: ''
       };
+    } finally {
+      // Always close the temporary page
+      if (tempPage && !tempPage.isClosed()) {
+        try {
+          await tempPage.close();
+        } catch (closeError) {
+          console.error('Error closing temporary page:', closeError.message);
+        }
+      }
     }
   }
 
@@ -293,7 +327,7 @@ class MigrationComparator {
       fs.writeFileSync(resultsFile, JSON.stringify(results, null, 2));
 
       // Generate human-readable report
-      const reportFile = path.join(this.resultsDir, `migration_report_${timestamp}.txt`);
+      const reportFile = path.join(this.resultsDir, `migration_report_${timestamp}.md`);
       this.generateHumanReadableReport(results, reportFile);
 
       console.log('\n=== Comparison Complete ===');
@@ -346,16 +380,18 @@ ${results.newUrls.length > 0 ? results.newUrls.map((url, index) => `${index + 1}
 ## Pages with Changes (${results.pageComparisons.length})
 
 ${results.pageComparisons.length > 0 ? results.pageComparisons.map((page, pageIndex) => {
-  const changesList = page.changes.map((change, changeIndex) => {
-    return `### ${changeIndex + 1}. ${change.field}
-
-**Old Value:** ${change.old || '(empty)'}
-**New Value:** ${change.new || '(empty)'}`;
-  }).join('\n\n');
+  const changesTable = page.changes.map((change, changeIndex) => {
+    return `| ${changeIndex + 1} | ${change.field} | ${change.old || '(empty)'} | ${change.new || '(empty)'} |`;
+  }).join('\n');
 
   return `### ${pageIndex + 1}. ${page.url}
 
-${changesList}`;
+| # | Field | Old Value | New Value |
+|---|-------|-----------|-----------|
+${changesTable}
+
+**Total Changes:** ${page.changes.length}
+`;
 }).join('\n\n') : '*No pages with changes found*'}
 
 ---
@@ -430,4 +466,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = MigrationComparator; 
+module.exports = MigrationComparator;

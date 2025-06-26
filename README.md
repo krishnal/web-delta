@@ -35,6 +35,18 @@ node migration-compare.js --old=<old-domain> --new=<new-domain>
 node simple-test.js --old=<old-domain> --new=<new-domain>
 ```
 
+#### Using npm scripts
+```bash
+# Full comparison using npm
+npm run start:compare -- --old=<old-domain> --new=<new-domain>
+
+# Simple comparison using npm
+npm run start:simple -- --old=<old-domain> --new=<new-domain>
+
+# Show usage instructions
+npm start
+```
+
 #### Alternative Syntax
 ```bash
 # Using short flags
@@ -51,6 +63,10 @@ node migration-compare.js --old=https://oldwebsite.com --new=https://newwebsite.
 
 # Quick comparison
 node simple-test.js --old=https://oldwebsite.com --new=https://newwebsite.com
+
+# Using npm scripts
+npm run start:compare -- --old=https://oldwebsite.com --new=https://newwebsite.com
+npm run start:simple -- --old=https://oldwebsite.com --new=https://newwebsite.com
 
 # Using short flags
 node migration-compare.js -o https://oldwebsite.com -n https://newwebsite.com
